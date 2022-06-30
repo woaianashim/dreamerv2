@@ -37,7 +37,7 @@ class RSSMModel(jit.ScriptModule):
 
         post_logits = []
         prior_logits = []
-        states = []
+        z_states = []
         hiddens = [hidden]
 
         for t in range(T):
@@ -45,28 +45,29 @@ class RSSMModel(jit.ScriptModule):
             prior_logits.append(prior_logit)
             post_logit = self.representation(torch.cat([embed[t], hidden], dim=-1))
             post_logits.append(post_logit)
-            last_state = self.straight_sample(post_logit)
+            last_z_state = self.straight_sample(post_logit)
             # Update hidden
-            feats = self.recurrent_mlp(torch.cat([last_state, action[t]], dim=-1))
+            feats = self.recurrent_mlp(torch.cat([last_z_state, action[t]], dim=-1))
             hidden = self.recurrent_gru(feats, hidden)
             hiddens.append(hidden)
-            states.append(last_state)
+            z_states.append(last_z_state)
 
         prior_logits = torch.stack(prior_logits, dim=0)
         post_logits = torch.stack(post_logits, dim=0)
-        states = torch.stack(states, dim=0)
+        z_states = torch.stack(z_states, dim=0)
         hiddens = torch.stack(hiddens[:-1], dim=0)
-        full_states = torch.cat([states, hiddens], dim=-1)
-        return full_states, prior_logits, post_logits
+        full_states = torch.cat([z_states, hiddens], dim=-1)
+        return full_states, prior_logits, post_logits, (z_states, hiddens)
 
-    def imagine_step(self, hidden, last_state, action):
-        prior_logit = self.transition(torch.cat([hidden], dim=-1))
-        z_state = self.straight_sample(prior_logit)
-        # Update hidden
-        feats = self.recurrent_mlp(torch.cat([z_state, action[t]], dim=-1))
-        hidden = self.recurrent_gru(feats, hidden)
-        full_state = torch.cat([z_state, hidden], dim=-1)
-        return full_state, hidden
+    def imagine_step(self, z_h_state, action):
+        z_state, hidden = z_h_state
+        feats = self.recurrent_mlp(torch.cat([z_state, action], dim=-1))
+        new_hidden = self.recurrent_gru(feats, hidden)
+        prior_logit = self.transition(new_hidden)
+        new_z_state = self.straight_sample(prior_logit)
+        return (new_z_state, new_hidden)
+
+
 
     @torch.no_grad()
     def encode_step(self, embed, hidden,):
@@ -147,13 +148,13 @@ class WorldModel(nn.Module):
 
     def eval(self, obs, action, hidden=None):
         embed = self.encoder(obs)
-        states, prior_logits, post_logits = self.rssm(action, embed, hidden=hidden)
+        states, prior_logits, post_logits, z_h_states = self.rssm(action, embed, hidden=hidden)
 
         obs_mean = self.decoder(states)
         rew_mean = self.reward(states).squeeze(-1)
         done_prob = self.done(states).squeeze(-1)
 
-        return obs_mean, rew_mean, done_prob, states, post_logits, prior_logits
+        return obs_mean, rew_mean, done_prob, states, post_logits, prior_logits, z_h_states
 
     def encode(self, obs, hidden,):
         embed = self.encoder(obs.unsqueeze(0)).squeeze(0)
@@ -162,3 +163,13 @@ class WorldModel(nn.Module):
 
     def step(self, hidden, z_state, action):
         return self.rssm.next_hidden(hidden, z_state, action)
+
+    def imagine_step(self, z_h_state, action):
+        new_z_h_state = self.rssm.imagine_step(z_h_state, action)
+        states = torch.cat(new_z_h_state, dim=-1)
+        rew_mean = self.reward(states).squeeze(-1)
+        rew_sample = rew_mean + torch.randn_like(rew_mean)
+        done_prob = self.done(states).squeeze(-1)
+        # TODO how to sample done?
+        return new_z_h_state, rew_sample, done_prob
+

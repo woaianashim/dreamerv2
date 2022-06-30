@@ -11,11 +11,17 @@ Learner:
   _target_: algo.learner.DreamLearner
   dataset: ${Dataset}
   policy: ${Agent}
-  critic: ${Agent}
+  critic: ${Critic}
   world: ${World}
   lr: 0.0001
   save_period: 1000
   device: ${device}
+
+Critic:
+  _target_: algo.agent.Critic
+  latent_size: 512
+  hidden_size: 256
+  depth: 2
 
 Agent:
   _target_: algo.agent.AtariAgent

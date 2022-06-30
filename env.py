@@ -49,7 +49,7 @@ class ToTensorEnv(gym.ObservationWrapper):
         self.device = device
 
     def observation(self, observation):
-        return torch.tensor(observation, device=self.device).float().squeeze()
+        return torch.tensor(np.array(observation), device=self.device).float().squeeze()
 
 def make_env(env_name, is_atari=True, record=False, device="cuda"):
     env = gym.make(env_name)

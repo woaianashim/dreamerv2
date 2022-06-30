@@ -9,7 +9,7 @@ from hydra.utils import instantiate
 
 class BaseLearner:
     def reset(self, obs):
-        obs = torch.tensor(obs, dtype=torch.float)
+        obs = obs.float()
         self.hidden = self.world.rssm.init_hidden.unsqueeze(0)
         self.dataset.reset(obs, self.hidden.squeeze(0))
 
@@ -24,9 +24,9 @@ class BaseLearner:
         self.dataset.add_step(**kwargs)
 
     def __call__(self, obs, deterministic=False):
-        obs = torch.tensor(obs, dtype=torch.float).to(self.device).unsqueeze(0)
+        obs = obs.float().to(self.device).unsqueeze(0)
         state, z_state = self.world.encode(obs, self.hidden)
-        action = self.policy.step(state, deterministic)
+        action, _, _ = self.policy.step(state, deterministic)
         self.hidden = self.world.step(self.hidden, z_state, action)
         return action.detach().cpu().argmax()
 
@@ -39,13 +39,6 @@ class BaseLearner:
         for key in data:
             data[key] = data[key].to(self.device)
         return data
-
-    def update_target(self, hard=False):
-        tau = self.tau if not hard else 1.0
-        for par, targ_par in zip(
-            self.critic.parameters(), self.target_critic.parameters()
-        ):
-            targ_par.data = targ_par.data * (1.0 - tau) + par.data * tau
 
     @property
     def alpha(self):
@@ -62,7 +55,6 @@ class BaseLearner:
                 },
                 "critic": {
                     "model": self.critic.state_dict(),
-                    "target": self.target_critic.state_dict(),
                     "optim": self.critic_optim.state_dict(),
                 },
                 "world": {
@@ -77,7 +69,6 @@ class BaseLearner:
         self.policy.load_state_dict(state["policy"]["model"])
         self.policy_optim.load_state_dict(state["policy"]["optim"])
         self.critic.load_state_dict(state["critic"]["model"])
-        self.target_critic.load_state_dict(state["critic"]["target"])
         self.critic_optim.load_state_dict(state["critic"]["optim"])
         self.world.load_state_dict(state["world"]["model"])
         self.world_optim.load_state_dict(state["world"]["optim"])
@@ -93,6 +84,11 @@ class DreamLearner(BaseLearner):
         world,
         lr=0.001,
         kl_alpha=0.9,
+        rho = 0.8,
+        gamma = 0.999,
+        gae_lambda = 0.95,
+        entropy_coef = 0.,
+        imagine_horizon=10,
         save_period=1000,
         observation_space=None,
         action_space=None,
@@ -100,16 +96,19 @@ class DreamLearner(BaseLearner):
     ):
         self.device = device
         self.kl_alpha = kl_alpha
+        self.rho = rho
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.entropy_coef = entropy_coef
+        self.imagine_horizon = imagine_horizon
 
         self.dataset = instantiate(dataset, action_space=action_space)
 
         self.policy = instantiate(policy, action_space=action_space).to(device)
         self.policy_optim = optim.Adam(self.policy.parameters(), lr=lr)
 
-        self.critic = instantiate(critic, action_space=action_space).to(device)
+        self.critic = instantiate(critic,).to(device)
         self.critic_optim = optim.Adam(self.critic.parameters(), lr=lr)
-
-        self.target_critic = instantiate(critic, action_space=action_space).to(device)
 
         self.world = instantiate(world, action_space=action_space).to(device)
         self.world_optim = optim.Adam(self.world.parameters(), lr=lr)
@@ -127,40 +126,91 @@ class DreamLearner(BaseLearner):
             data["hidden"],
         )
 
-        representation_loss, states, losses = self.representation_loss(obs, action, rew, done, hidden)
+        representation_loss, states, z_h_states, losses = self.representation_loss(obs, action, rew, done, hidden)
 
         self.world_optim.zero_grad()
         representation_loss.backward()
         self.world_optim.step()
 
-        #im_states, im_rews = self.imagine_trajectories(states)
+        actor_loss, critic_loss, ac_losses = self.actor_critic_loss(z_h_states)
+        losses.update(ac_losses)
         #im_estimates, im_preds = self.imagine_estimates(im_states, im_rews)
 
         #actor_loss = -im_estimates.mean()
-        #self.actor_optim.zero_grad()
-        #actor_loss.backward()
-        #self.actor_optim.step()
+        self.policy_optim.zero_grad()
+        actor_loss.backward(retain_graph=True)
+        self.policy_optim.step()
 
         #critic_loss = F.mse_loss(im_estimates.detach(), im_preds)
-        #self.critic_optim.zero_grad()
-        #critic_loss.backward()
-        #self.critic_optim.step()
+        self.critic_optim.zero_grad()
+        critic_loss.backward()
+        self.critic_optim.step()
 
         return losses  # TODO
 
-    def imagine_trajectories(states):
-        pass #TODO
+    def imagine_trajectories(self, z_h_states):
+        z_states, hiddens = z_h_states
+        z_h_states = (z_states.view(-1, z_states.shape[-1]).detach(), hiddens.view(-1, hiddens.shape[-1]).detach())
+        self.world.requires_grad_(False)
+        rewards = []
+        dones = []
+        actions_logprobs = []
+        entropies = []
+        states = [torch.cat(z_h_states, dim=-1)]
+        for _ in range(self.imagine_horizon):
+            action, actions_logprob, entropy = self.policy.step(states[-1],)
+            z_h_states, reward, done = self.world.imagine_step(z_h_states, action)
+            rewards.append(reward)
+            dones.append(done)
+            actions_logprobs.append(actions_logprob)
+            entropies.append(entropy)
+            states.append(torch.cat(z_h_states, dim=-1))
+        rewards = torch.stack(rewards, dim=0)
+        entropies = torch.stack(entropies, dim=0)
+        actions_logprobs = torch.stack(actions_logprobs, dim=0)
+        dones = torch.stack(dones, dim=0)
+        states = torch.stack(states, dim=0)
+        self.world.requires_grad_(True)
+        return states, rewards, dones, actions_logprobs, entropies
 
-    def imagine_estimates(self, states, rews):
-        preds = self.critic(states)
 
-        # GAE estimates
-        estimates = 0  # TODO
+    def actor_critic_loss(self, z_h_states):
+        states, rewards, dones, actions_logprobs, entropy = self.imagine_trajectories(z_h_states)
 
-        return estimates, preds
+        critic_preds = self.critic(states.detach()).squeeze(-1)
+        self.critic.requires_grad_(False)
+        lambda_targets = self.lambda_target(rewards, dones, critic_preds)
+        self.critic.requires_grad_(True)
+
+        critic_loss = F.mse_loss(critic_preds[:-1], lambda_targets.detach())
+
+        actor_loss_dynamic = -lambda_targets
+        actor_loss_reinforce = -actions_logprobs*(lambda_targets-critic_preds[:-1]).detach()
+        actor_loss = self.rho*actor_loss_reinforce + (1-self.rho)*actor_loss_dynamic - self.entropy_coef*entropy
+        actor_loss = actor_loss.mean()
+
+        losses = {
+                  "critic_loss": critic_loss.item(),
+                  "actor_loss": actor_loss.item(),
+                  "actor_loss_reinforce": actor_loss_reinforce.mean().item(),
+                  "actor_loss_dynamic":actor_loss_dynamic.mean().item()
+                }
+
+        return actor_loss, critic_loss, losses
+
+    def lambda_target(self, rewards, dones, preds):
+        next_value = preds[-1]
+        values = []
+        for t in reversed(range(rewards.shape[0])):
+            value = rewards[t] + self.gamma*dones[t]*(self.gae_lambda*next_value + (1-self.gae_lambda)*preds[t])
+            values.insert(0, value)
+            next_value = value
+        lambda_target = torch.stack(values, dim=0)
+        return lambda_target
+
 
     def representation_loss(self, obs, action, rew, done, hidden): #TODO Transition loss
-        obs_mean, rew_mean, done_prob, states, post_logits, prior_logits = self.world.eval(obs, action, hidden)
+        obs_mean, rew_mean, done_prob, states, post_logits, prior_logits, z_h_states = self.world.eval(obs, action, hidden)
 
         # Obs and reward reconstruction loss
         obs_loss = F.mse_loss(obs, obs_mean)
@@ -184,4 +234,4 @@ class DreamLearner(BaseLearner):
                 "representation": representation_loss.item()
                 }
 
-        return representation_loss, states, losses
+        return representation_loss, states, z_h_states, losses

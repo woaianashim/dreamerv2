@@ -9,11 +9,11 @@ class EpisodeBuffer:
 
     def add_step(self, obs, rew, action, done, hidden):
         self.size += 1
-        self.obs.append(torch.tensor(obs).cpu())
-        self.action.append(torch.tensor(action).cpu())
-        self.rew.append(torch.tensor(rew).cpu())
-        self.done.append(torch.tensor(done).cpu())
-        self.hidden.append(torch.tensor(hidden).cpu())
+        self.obs.append(torch.tensor(obs) if not isinstance(obs, torch.Tensor) else obs.clone().detach().cpu())
+        self.action.append(torch.tensor(action) if not isinstance(action, torch.Tensor) else action.clone().detach().cpu())
+        self.rew.append(torch.tensor(rew) if not isinstance(rew, torch.Tensor) else rew.clone().detach().cpu())
+        self.done.append(torch.tensor(done) if not isinstance(done, torch.Tensor) else done.clone().detach().cpu())
+        self.hidden.append(torch.tensor(hidden) if not isinstance(hidden, torch.Tensor) else hidden.clone().detach().cpu())
 
     def reset(self, obs=None, hidden=None):
         if obs is None:
