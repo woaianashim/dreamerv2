@@ -1,0 +1,43 @@
+device: cuda:0
+total_steps: 1e7
+random_steps: 2000
+update_freq: 4
+
+Environment:
+  _target_: env.make_env
+  env_name: PongNoFrameskip-v4
+
+Learner:
+  _target_: algo.learner.DreamLearner
+  dataset: ${Dataset}
+  policy: ${Agent}
+  critic: ${Agent}
+  world: ${World}
+  lr: 0.0001
+  save_period: 1000
+  device: ${device}
+
+Agent:
+  _target_: algo.agent.AtariAgent
+  latent_size: 512
+  hidden_size: 256
+  depth: 2
+
+World:
+  _target_: algo.world.WorldModel
+  state_dim: 256
+  hidden_dim: 256
+  feat_dim: 200
+  embed_dim: 1024
+  conv_hid: 32
+
+Dataset:
+  _target_: algo.storage.DreamerDataset
+  maxsize: 1000000
+  batch_size: 32
+  batch_len: 22
+  minimal_size: ${random_steps}
+
+Logger:
+  _target_: logger.Logger
+  log_period: 500
