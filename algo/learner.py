@@ -40,10 +40,6 @@ class BaseLearner:
             data[key] = data[key].to(self.device)
         return data
 
-    @property
-    def alpha(self):
-        return self.log_alpha.exp()
-
     def save(self, step):
         if step > self.last_save + self.save_period:
             self.last_save = step
@@ -83,7 +79,11 @@ class DreamLearner(BaseLearner):
         critic,
         world,
         lr=0.001,
+        world_lr= 2e-4,
+        actor_lr= 4e-5,
+        critic_lr= 1e-4,
         kl_alpha=0.9,
+        kl_beta=0.1,
         rho = 0.8,
         gamma = 0.999,
         gae_lambda = 0.95,
@@ -96,6 +96,7 @@ class DreamLearner(BaseLearner):
     ):
         self.device = device
         self.kl_alpha = kl_alpha
+        self.kl_beta = kl_beta
         self.rho = rho
         self.gamma = gamma
         self.gae_lambda = gae_lambda
@@ -105,13 +106,17 @@ class DreamLearner(BaseLearner):
         self.dataset = instantiate(dataset, action_space=action_space)
 
         self.policy = instantiate(policy, action_space=action_space).to(device)
-        self.policy_optim = optim.Adam(self.policy.parameters(), lr=lr)
+        self.policy_optim = optim.Adam(self.policy.parameters(), lr=actor_lr, eps=1e-5, weight_decay=1e-6)
 
-        self.critic = instantiate(critic,).to(device)
-        self.critic_optim = optim.Adam(self.critic.parameters(), lr=lr)
+        self.critic = instantiate(critic,).to(device) #TODO slow update
+        self.critic_target = instantiate(critic,).to(device) #TODO slow update
+        self.critic_target.load_state_dict(self.critic.state_dict())
+        self.critic_target.requires_grad_(False)
+        self.update_counter = 0
+        self.critic_optim = optim.Adam(self.critic.parameters(), lr=critic_lr, eps=1e-5, weight_decay=1e-6)
 
         self.world = instantiate(world, action_space=action_space).to(device)
-        self.world_optim = optim.Adam(self.world.parameters(), lr=lr)
+        self.world_optim = optim.Adam(self.world.parameters(), lr=world_lr, eps=1e-5, weight_decay=1e-6)
 
         self.last_save = 0
         self.save_period = save_period
@@ -130,6 +135,7 @@ class DreamLearner(BaseLearner):
 
         self.world_optim.zero_grad()
         representation_loss.backward()
+        nn.utils.clip_grad_norm_(self.world.parameters(), 100)
         self.world_optim.step()
 
         actor_loss, critic_loss, ac_losses = self.actor_critic_loss(z_h_states)
@@ -139,12 +145,18 @@ class DreamLearner(BaseLearner):
         #actor_loss = -im_estimates.mean()
         self.policy_optim.zero_grad()
         actor_loss.backward(retain_graph=True)
+        nn.utils.clip_grad_norm_(self.policy.parameters(), 100)
         self.policy_optim.step()
 
         #critic_loss = F.mse_loss(im_estimates.detach(), im_preds)
         self.critic_optim.zero_grad()
         critic_loss.backward()
+        nn.utils.clip_grad_norm_(self.critic.parameters(), 100)
         self.critic_optim.step()
+        self.update_counter += 1
+        if self.update_counter == 100:
+            self.critic_target.load_state_dict(self.critic.state_dict())
+            self.update_counter = 0
 
         return losses  # TODO
 
@@ -178,14 +190,15 @@ class DreamLearner(BaseLearner):
         states, rewards, dones, actions_logprobs, entropy = self.imagine_trajectories(z_h_states)
 
         critic_preds = self.critic(states.detach()).squeeze(-1)
+        critic_target_preds = self.critic_target(states.detach()).squeeze(-1)
         self.critic.requires_grad_(False)
-        lambda_targets = self.lambda_target(rewards, dones, critic_preds)
+        lambda_targets = self.lambda_target(rewards, dones, critic_target_preds)
         self.critic.requires_grad_(True)
 
         critic_loss = F.mse_loss(critic_preds[:-1], lambda_targets.detach())
 
         actor_loss_dynamic = -lambda_targets
-        actor_loss_reinforce = -actions_logprobs*(lambda_targets-critic_preds[:-1]).detach()
+        actor_loss_reinforce = -actions_logprobs*(lambda_targets-critic_target_preds[:-1]).detach()
         actor_loss = self.rho*actor_loss_reinforce + (1-self.rho)*actor_loss_dynamic - self.entropy_coef*entropy
         actor_loss = actor_loss.mean()
 
@@ -202,7 +215,7 @@ class DreamLearner(BaseLearner):
         next_value = preds[-1]
         values = []
         for t in reversed(range(rewards.shape[0])):
-            value = rewards[t] + self.gamma*dones[t]*(self.gae_lambda*next_value + (1-self.gae_lambda)*preds[t])
+            value = rewards[t] + self.gamma*(1-dones[t])*(self.gae_lambda*next_value + (1-self.gae_lambda)*preds[t])
             values.insert(0, value)
             next_value = value
         lambda_target = torch.stack(values, dim=0)
@@ -214,17 +227,18 @@ class DreamLearner(BaseLearner):
 
         # Obs and reward reconstruction loss
         obs_loss = F.mse_loss(obs, obs_mean)
-        rew_loss = F.mse_loss(rew, rew_mean)
-        done_loss = F.binary_cross_entropy(done_prob, done)
+        rew_loss = F.mse_loss(rew, rew_mean[1:])
+        done_loss = F.binary_cross_entropy(done_prob[1:], done)
         # KL loss TODO check
         post_probs = F.softmax(post_logits, dim=-1)
+        post_logprobs = F.log_softmax(post_logits, dim=-1)
         prior_logprobs = F.log_softmax(prior_logits, dim=-1)
-        KL_post = (post_probs*prior_logprobs.detach()).sum(-1)
-        KL_prior = (post_probs.detach()*prior_logprobs).sum(-1)
+        KL_post = -(post_probs*prior_logprobs.detach()).sum(-1) + (post_probs*post_logprobs).sum(-1)
+        KL_prior = -(post_probs.detach()*prior_logprobs).sum(-1)
         KL_loss = self.kl_alpha*KL_prior + (1-self.kl_alpha)*KL_post
         KL_loss = KL_loss.mean()
 
-        representation_loss = obs_loss + rew_loss + done_loss - KL_loss # TODO check signs
+        representation_loss = obs_loss + rew_loss + done_loss + self.kl_beta*KL_loss # TODO check signs
 
         losses = {
                 "reward": rew_loss.item(),

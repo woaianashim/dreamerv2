@@ -45,7 +45,7 @@ def main(cfg):
 
         learner.store_step(obs=obs, rew=reward, done=done, action=action)
 
-        if learner.full:
+        if learner.full and step%cfg.update_freq:
             logger.start_log(step)
             loss = learner.learn_step()
             logger.add_loss(step, loss)

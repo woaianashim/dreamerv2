@@ -9,8 +9,10 @@ from hydra.utils import instantiate
 
 
 class RSSMModel(jit.ScriptModule):
-    def __init__(self, state_dim, action_dim, feat_dim, embed_dim, hidden_dim):
+    def __init__(self, state_dim, action_dim, feat_dim, embed_dim, hidden_dim, n_classes=32, n_states=32):
         super().__init__()
+        self.n_classes = n_classes
+        self.n_states = n_states
 
         # Recurrent model
         self.recurrent_mlp = nn.Sequential(nn.Linear(state_dim+action_dim, feat_dim),
@@ -18,7 +20,7 @@ class RSSMModel(jit.ScriptModule):
                                            nn.ELU())
         self.recurrent_gru = nn.GRUCell(feat_dim, hidden_dim)
         self.register_buffer("init_hidden", torch.zeros(hidden_dim))
-        self.register_buffer("init_state", torch.zeros(state_dim))
+        #self.register_buffer("init_state", torch.zeros(state_dim))
 
         # Representation model
         self.representation = nn.Sequential(nn.Linear(hidden_dim+embed_dim, feat_dim), nn.ELU(),
@@ -40,22 +42,23 @@ class RSSMModel(jit.ScriptModule):
         z_states = []
         hiddens = [hidden]
 
-        for t in range(T):
+        for t in range(T+1):
             prior_logit = self.transition(hidden)
             prior_logits.append(prior_logit)
             post_logit = self.representation(torch.cat([embed[t], hidden], dim=-1))
             post_logits.append(post_logit)
             last_z_state = self.straight_sample(post_logit)
-            # Update hidden
-            feats = self.recurrent_mlp(torch.cat([last_z_state, action[t]], dim=-1))
-            hidden = self.recurrent_gru(feats, hidden)
-            hiddens.append(hidden)
             z_states.append(last_z_state)
+            # Update hidden
+            if t<T:
+                feats = self.recurrent_mlp(torch.cat([last_z_state, action[t]], dim=-1))
+                hidden = self.recurrent_gru(feats, hidden)
+                hiddens.append(hidden)
 
         prior_logits = torch.stack(prior_logits, dim=0)
         post_logits = torch.stack(post_logits, dim=0)
         z_states = torch.stack(z_states, dim=0)
-        hiddens = torch.stack(hiddens[:-1], dim=0)
+        hiddens = torch.stack(hiddens, dim=0)
         full_states = torch.cat([z_states, hiddens], dim=-1)
         return full_states, prior_logits, post_logits, (z_states, hiddens)
 
@@ -84,12 +87,14 @@ class RSSMModel(jit.ScriptModule):
 
 
     def straight_sample(self, logits):
+        b, c = logits.shape
+        logits = logits.view(b, self.n_classes, self.n_states)
         probs = F.softmax(logits, dim=-1)
-        probs_2d = probs.view(-1, probs.shape[-1])
-        ind_2d = probs_2d.multinomial(1)
-        indeces = ind_2d.view(probs.shape[:-1])
-        samples = F.one_hot(indeces, probs.shape[-1]).to(probs)
-        return samples + probs - probs.detach()
+        probs = probs.view(-1, self.n_states)
+        inds = probs.multinomial(1).squeeze(-1)
+        samples = F.one_hot(inds, self.n_states).to(probs)
+        samples = samples.view(b, c)
+        return samples + probs.view(b, c) - probs.view(b, c).detach()
 
 
 
@@ -138,7 +143,7 @@ class WorldModel(nn.Module):
         self.rssm = RSSMModel(state_dim, action_space.n, feat_dim, embed_dim, hidden_dim)
         self.reward = nn.Sequential(
                                     nn.Linear(state_dim+hidden_dim, feat_dim), nn.ELU(),
-                                    nn.Linear(feat_dim, 1)
+                                    nn.Linear(feat_dim, 1), nn.Tanh()
                                     ) 
         self.done   = nn.Sequential(
                                     nn.Linear(state_dim+hidden_dim, feat_dim), nn.ELU(),

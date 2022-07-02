@@ -57,7 +57,7 @@ class EpisodeStorage(IterableDataset):
         self.num_actions = action_space.n
 
     def __len__(self):
-        return self.total_steps
+        return len(self.episodes)
 
     def add_step(self, obs, rew, action, done, hidden):
         self.current_episode.add_step(obs, rew, action, done, hidden)
@@ -84,7 +84,7 @@ class EpisodeStorage(IterableDataset):
             start = randint(0, episode["size"])
             start = min(start, episode["size"]-self.batch_len)
             i += 1
-            data = {k: episode[k][start:start+self.batch_len] for k in EpisodeBuffer.keys}
+            data = {k: episode[k][start:start+self.batch_len + (1 if k=="obs" else 0)] for k in EpisodeBuffer.keys}
             data["hidden"] = episode["hidden"][start]
             data["action"]= F.one_hot(data["action"].long(), self.num_actions)
 

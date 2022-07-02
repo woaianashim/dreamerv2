@@ -13,36 +13,46 @@ Learner:
   policy: ${Agent}
   critic: ${Critic}
   world: ${World}
+  world_lr: 2e-4
+  actor_lr: 4e-5
+  critic_lr: 1e-4
   lr: 0.0001
+  kl_alpha: 0.8
+  kl_beta: 0.1
+  rho: 1
+  gamma: 0.995
+  gae_lambda: 0.95
+  imagine_horizon: 15
+  entropy_coef: 1e-3
   save_period: 1000
   device: ${device}
 
 Critic:
   _target_: algo.agent.Critic
-  latent_size: 512
-  hidden_size: 256
-  depth: 2
+  latent_size: ${Agent.latent_size}
+  hidden_size: 400
+  depth: 4
 
 Agent:
   _target_: algo.agent.AtariAgent
-  latent_size: 512
-  hidden_size: 256
-  depth: 2
+  latent_size: 1280
+  hidden_size: 400
+  depth: 4
 
 World:
   _target_: algo.world.WorldModel
-  state_dim: 256
+  state_dim: 1024
   hidden_dim: 256
-  feat_dim: 200
+  feat_dim: 600
   embed_dim: 1024
   conv_hid: 32
 
 Dataset:
   _target_: algo.storage.DreamerDataset
   maxsize: 1000000
-  batch_size: 32
-  batch_len: 22
-  minimal_size: ${random_steps}
+  batch_size: 50
+  batch_len: 50
+  minimal_size: 10
 
 Logger:
   _target_: logger.Logger
