@@ -46,6 +46,8 @@ World:
   feat_dim: 600
   embed_dim: 1024
   conv_hid: 32
+  n_classes: 32
+  n_states: 32
 
 Dataset:
   _target_: algo.storage.DreamerDataset

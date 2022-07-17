@@ -136,11 +136,13 @@ class Decoder(nn.Module):
             
 
 class WorldModel(nn.Module):
-    def __init__(self, state_dim, hidden_dim, feat_dim, conv_hid, embed_dim, action_space=None):
+    def __init__(self, state_dim, hidden_dim, feat_dim, conv_hid, embed_dim, n_classes, n_states, action_space=None):
         super().__init__()
+        self.n_classes = n_classes
+        self.n_states = n_states
         self.encoder = Encoder(hid=conv_hid)
         self.decoder = Decoder(input_dim=state_dim+hidden_dim, hid=conv_hid)
-        self.rssm = RSSMModel(state_dim, action_space.n, feat_dim, embed_dim, hidden_dim)
+        self.rssm = RSSMModel(state_dim, action_space.n, feat_dim, embed_dim, hidden_dim, n_classes=n_classes, n_states=n_states)
         self.reward = nn.Sequential(
                                     nn.Linear(state_dim+hidden_dim, feat_dim), nn.ELU(),
                                     nn.Linear(feat_dim, 1), nn.Tanh()

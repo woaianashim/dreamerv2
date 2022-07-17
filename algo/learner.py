@@ -230,9 +230,11 @@ class DreamLearner(BaseLearner):
         rew_loss = F.mse_loss(rew, rew_mean[1:])
         done_loss = F.binary_cross_entropy(done_prob[1:], done)
         # KL loss TODO check
+        post_logits = post_logits.view(*post_logits.shape[:2], self.world.n_classes, self.world.n_states)
+        post_logprobs = post_logits - post_logits.logsumexp(dim=-1, keepdim=True)
+        prior_logits = prior_logits.view(*post_logits.shape[:2], self.world.n_classes, self.world.n_states)
+        prior_logprobs = prior_logits - prior_logits.logsumexp(dim=-1, keepdim=True)
         post_probs = F.softmax(post_logits, dim=-1)
-        post_logprobs = F.log_softmax(post_logits, dim=-1)
-        prior_logprobs = F.log_softmax(prior_logits, dim=-1)
         KL_post = -(post_probs*prior_logprobs.detach()).sum(-1) + (post_probs*post_logprobs).sum(-1)
         KL_prior = -(post_probs.detach()*prior_logprobs).sum(-1)
         KL_loss = self.kl_alpha*KL_prior + (1-self.kl_alpha)*KL_post
