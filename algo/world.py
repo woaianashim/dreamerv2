@@ -23,11 +23,11 @@ class RSSMModel(jit.ScriptModule):
         #self.register_buffer("init_state", torch.zeros(state_dim))
 
         # Representation model
-        self.representation = nn.Sequential(nn.Linear(hidden_dim+embed_dim, feat_dim), nn.ELU(),
+        self.representation = nn.Sequential(nn.Linear(hidden_dim+embed_dim, feat_dim), nn.LayerNorm(feat_dim), nn.ELU(),
                                             nn.Linear(feat_dim, state_dim))
 
         # Transition model
-        self.transition = nn.Sequential(nn.Linear(hidden_dim, feat_dim), nn.ELU(),
+        self.transition = nn.Sequential(nn.Linear(hidden_dim, feat_dim), nn.LayerNorm(feat_dim), nn.ELU(),
                                         nn.Linear(feat_dim, state_dim))
 
 
@@ -119,38 +119,43 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, input_dim, hid=32,):
         super().__init__()
+        self.pre_linear = nn.Linear(input_dim, 32*hid)
         self.model = nn.Sequential(
-                                     nn.ConvTranspose2d(input_dim, 4*hid, 5, 2), nn.ReLU(),
+                                     nn.ConvTranspose2d(32*hid, 4*hid, 5, 2), nn.ReLU(),
                                      nn.ConvTranspose2d(4*hid, 2*hid, 5, 2), nn.ReLU(),
                                      nn.ConvTranspose2d(2*hid, hid, 6, 2), nn.ReLU(),
                                      nn.ConvTranspose2d(hid, 4, 6, 2), 
                 )
 
     def forward(self, state):
+        state = self.pre_linear(state)
         T, B, C = state.shape
         state = state.view(T*B, C, 1, 1)
         mean = self.model(state)
         mean = mean.view(T, B, 4, 64, 64)
         return mean
 
-            
+class MLP(nn.Module):
+    def __init__(self, input_dim, feat_dim, output_dim, depth, activation=nn.Identity()):
+        super().__init__()
+        layers = [nn.Linear(input_dim, feat_dim), nn.LayerNorm(feat_dim, 1e-3), nn.ELU(),]
+        for _ in range(depth-1):
+            layers += [nn.Linear(feat_dim, feat_dim), nn.LayerNorm(feat_dim, 1e-3), nn.ELU(),]
+        layers += [nn.Linear(feat_dim, output_dim), activation]
+        self.module = nn.Sequential(*layers)
+    def forward(self, x):
+        return self.module(x)
 
 class WorldModel(nn.Module):
-    def __init__(self, state_dim, hidden_dim, feat_dim, conv_hid, embed_dim, n_classes, n_states, action_space=None):
+    def __init__(self, state_dim, hidden_dim, feat_dim, conv_hid, embed_dim, n_classes, n_states, mlp_depth, action_space=None):
         super().__init__()
         self.n_classes = n_classes
         self.n_states = n_states
         self.encoder = Encoder(hid=conv_hid)
         self.decoder = Decoder(input_dim=state_dim+hidden_dim, hid=conv_hid)
         self.rssm = RSSMModel(state_dim, action_space.n, feat_dim, embed_dim, hidden_dim, n_classes=n_classes, n_states=n_states)
-        self.reward = nn.Sequential(
-                                    nn.Linear(state_dim+hidden_dim, feat_dim), nn.ELU(),
-                                    nn.Linear(feat_dim, 1), nn.Tanh()
-                                    ) 
-        self.done   = nn.Sequential(
-                                    nn.Linear(state_dim+hidden_dim, feat_dim), nn.ELU(),
-                                    nn.Linear(feat_dim, 1), nn.Sigmoid()
-                                    ) 
+        self.reward = MLP(state_dim+hidden_dim, feat_dim, 1, mlp_depth, activation=nn.Tanh())
+        self.done = MLP(state_dim+hidden_dim, feat_dim, 1, mlp_depth, activation=nn.Sigmoid())
 
 
     def eval(self, obs, action, hidden=None):
@@ -175,7 +180,7 @@ class WorldModel(nn.Module):
         new_z_h_state = self.rssm.imagine_step(z_h_state, action)
         states = torch.cat(new_z_h_state, dim=-1)
         rew_mean = self.reward(states).squeeze(-1)
-        rew_sample = rew_mean + torch.randn_like(rew_mean)
+        rew_sample = rew_mean + 0.08*torch.randn_like(rew_mean)
         done_prob = self.done(states).squeeze(-1)
         # TODO how to sample done?
         return new_z_h_state, rew_sample, done_prob

@@ -1,8 +1,7 @@
 device: cuda:0
 total_steps: 1e7
-random_steps: 20000
+random_steps: 2000
 update_freq: 4
-checkpoint: None # replace with absolute path to checkpoint
 
 Environment:
   _target_: env.make_env
@@ -36,18 +35,17 @@ Critic:
 
 Agent:
   _target_: algo.agent.AtariAgent
-  latent_size: 1624
+  latent_size: 1280
   hidden_size: 400
   depth: 4
 
 World:
   _target_: algo.world.WorldModel
   state_dim: 1024
-  hidden_dim: 600
+  hidden_dim: 256
   feat_dim: 600
   embed_dim: 1024
   conv_hid: 32
-  mlp_depth: 4
   n_classes: 32
   n_states: 32
 
@@ -56,7 +54,7 @@ Dataset:
   maxsize: 1000000
   batch_size: 50
   batch_len: 50
-  minimal_size: 4
+  minimal_size: 10
 
 Logger:
   _target_: logger.Logger

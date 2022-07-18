@@ -11,9 +11,9 @@ from hydra.utils import instantiate
 class AtariAgent(nn.Module):
     def __init__(self, latent_size, hidden_size, depth, action_space=None,):
         super().__init__()
-        layers = [nn.Linear(latent_size, hidden_size), nn.ReLU()]
+        layers = [nn.Linear(latent_size, hidden_size), nn.LayerNorm(hidden_size, 1e-3), nn.ELU()]
         for i in range(depth):
-            layers += [nn.Linear(hidden_size, hidden_size), nn.ReLU()]
+            layers += [nn.Linear(hidden_size, hidden_size), nn.LayerNorm(hidden_size, 1e-3), nn.ELU()]
         layers.append(nn.Linear(hidden_size, action_space.n))
         self.model = nn.Sequential(*layers)
 

@@ -21,6 +21,9 @@ def main(cfg):
     obs = env.reset()
     learner.reset(obs)
 
+    if cfg.checkpoint != "None":
+        print("Loading from checkpoint")
+        learner.load(cfg.checkpoint)
 
     print("Start learning.")
     rewards = 0.0
