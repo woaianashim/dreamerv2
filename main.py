@@ -1,5 +1,6 @@
 import hydra
 from time import time
+from algo.learner import Plotter
 
 
 @hydra.main(config_path="configs", config_name="dreamer")
@@ -24,6 +25,9 @@ def main(cfg):
     if cfg.checkpoint != "None":
         print("Loading from checkpoint")
         learner.load(cfg.checkpoint)
+
+    print("Initializing plotter.")
+    hydra.utils.instantiate(cfg.Plotter)
 
     print("Start learning.")
     rewards = 0.0

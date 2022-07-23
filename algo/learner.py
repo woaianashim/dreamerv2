@@ -6,6 +6,66 @@ import torch.nn.functional as F
 import hydra
 from hydra.utils import instantiate
 
+from time import perf_counter
+import numpy as np
+import cv2
+import os
+
+import imageio
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+
+
+def normalize(image):
+    return cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U).astype(np.uint8)
+
+
+class Plotter:
+    timer = perf_counter()
+    first = True
+    enable = False
+    period = 10
+
+    def __init__(self, enable=False, period=10):
+        Plotter.enable = enable
+        Plotter.period = period
+
+    @staticmethod
+    def plot(obs, obs_new):
+        """ plot gif from sequence of observation and save in test.gif """
+        if not Plotter.enable:
+            return
+
+        if perf_counter() - Plotter.timer > Plotter.period or Plotter.first:
+            start_tp = perf_counter()
+
+            obs = obs.cpu().numpy()[:, 0, 0]
+            obs_new = obs_new.detach().cpu().numpy()[:, 0, 0]
+            obs = np.concatenate((obs, obs_new), axis=2) 
+            obs = normalize(obs)
+
+            plt.figure()
+            plt.axis('off')
+            plt.imshow(obs[0], cmap='gray')
+            plt.savefig('tmp.png', bbox_inches='tight', pad_inches=0.0)
+            plt.close()
+
+            images = []
+            for i in range(len(obs)):
+                plt.imshow(obs[i], cmap='gray')
+                plt.axis('off')
+                plt.savefig('tmp.png', bbox_inches='tight', pad_inches=0.0)
+                plt.close()
+                images.append(normalize(mpimg.imread('tmp.png')))
+            imageio.mimsave('sequence.gif', images, duration=0.1)
+            os.remove('tmp.png')
+            print(f'>> sequence.gif | {len(images)} frames | {perf_counter() - start_tp:.2f}s')
+
+            Plotter.first = False
+            Plotter.timer = perf_counter() 
+
 
 class BaseLearner:
     def reset(self, obs):
@@ -225,8 +285,10 @@ class DreamLearner(BaseLearner):
     def representation_loss(self, obs, action, rew, done, hidden): #TODO Transition loss
         obs_mean, rew_mean, done_prob, states, post_logits, prior_logits, z_h_states = self.world.eval(obs, action, hidden)
 
+        Plotter.plot(obs, obs_mean)
+
         # Obs and reward reconstruction loss
-        obs_loss = F.mse_loss(obs, obs_mean)
+        obs_loss = F.mse_loss(obs, obs_mean).sum(-1).sum(-1).sum(-1).mean()
         rew_loss = F.mse_loss(rew, rew_mean[1:])
         done_loss = F.binary_cross_entropy(done_prob[1:], done)
         # KL loss TODO check

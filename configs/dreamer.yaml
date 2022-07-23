@@ -4,9 +4,15 @@ random_steps: 20000
 update_freq: 4
 checkpoint: None # replace with absolute path to checkpoint
 
+Plotter:
+  _target_: algo.learner.Plotter
+  enable: true
+  period: 10
+
 Environment:
   _target_: env.make_env
-  env_name: PongNoFrameskip-v4
+  env_name: RiverraidNoFrameskip-v4
+  # env_name: PongNoFrameskip-v4
 
 Learner:
   _target_: algo.learner.DreamLearner
@@ -54,7 +60,7 @@ World:
 Dataset:
   _target_: algo.storage.DreamerDataset
   maxsize: 1000000
-  batch_size: 50
+  batch_size: 5
   batch_len: 50
   minimal_size: 4
 
