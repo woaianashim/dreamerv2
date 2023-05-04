@@ -94,7 +94,7 @@ class RSSMModel(jit.ScriptModule):
 
     def imagine_step(self, z_h_state, action):
         z_state, hidden = z_h_state
-        prior_feat = self.transition(torch.cat([z_state, action], dim=-1))
+        prior_feat = self.transition(torch.cat([action, z_state], dim=-1))
         new_hidden = self.gru_update(prior_feat, hidden)
         prior_logit = self.prior_representation(new_hidden)
         new_z_state = self.straight_sample(prior_logit)
