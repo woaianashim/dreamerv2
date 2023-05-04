@@ -11,8 +11,9 @@ Plotter:
 
 Environment:
   _target_: env.make_env
-  env_name: RiverraidNoFrameskip-v4
-  # env_name: PongNoFrameskip-v4
+    #env_name: RiverraidNoFrameskip-v4
+  # name: atari_pong
+  env_name: PongNoFrameskip-v4
 
 Learner:
   _target_: algo.learner.DreamLearner
@@ -51,8 +52,8 @@ World:
   state_dim: 1024
   hidden_dim: 600
   feat_dim: 600
-  embed_dim: 1024
-  conv_hid: 32
+  embed_dim: 1536
+  conv_hid: 48
   mlp_depth: 4
   n_classes: 32
   n_states: 32
@@ -60,8 +61,8 @@ World:
 Dataset:
   _target_: algo.storage.DreamerDataset
   maxsize: 1000000
-  batch_size: 5
-  batch_len: 50
+  batch_size: 50
+  batch_len: 40
   minimal_size: 4
 
 Logger:

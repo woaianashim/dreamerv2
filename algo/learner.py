@@ -12,6 +12,8 @@ import cv2
 import os
 
 import imageio
+import matplotlib
+matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -28,7 +30,7 @@ class Plotter:
     enable = False
     period = 10
 
-    def __init__(self, enable=False, period=10):
+    def __init__(self, enable=False, period=50):
         Plotter.enable = enable
         Plotter.period = period
 
@@ -41,20 +43,26 @@ class Plotter:
         if perf_counter() - Plotter.timer > Plotter.period or Plotter.first:
             start_tp = perf_counter()
 
-            obs = obs.cpu().numpy()[:, 0, 0]
-            obs_new = obs_new.detach().cpu().numpy()[:, 0, 0]
-            obs = np.concatenate((obs, obs_new), axis=2) 
+            #obs = obs.cpu().numpy()[:, 0, 0]
+            obs = obs.cpu().numpy()[:, 0]
+            #obs_new = obs_new.detach().cpu().numpy()[:, 0, 0]
+            obs_new = obs_new.detach().cpu().numpy()[:, 0]
+            obs = np.concatenate((obs, obs_new), axis=-2) 
+            obs = obs.swapaxes(1,-1).swapaxes(1,2)
+            print(obs.shape)
             obs = normalize(obs)
 
             plt.figure()
             plt.axis('off')
-            plt.imshow(obs[0], cmap='gray')
+            #plt.imshow(obs[0], cmap='gray')
+            #plt.imshow(obs[0])
             plt.savefig('tmp.png', bbox_inches='tight', pad_inches=0.0)
             plt.close()
 
             images = []
             for i in range(len(obs)):
-                plt.imshow(obs[i], cmap='gray')
+                #plt.imshow(obs[i], cmap='gray')
+                #plt.imshow(obs[i])
                 plt.axis('off')
                 plt.savefig('tmp.png', bbox_inches='tight', pad_inches=0.0)
                 plt.close()
