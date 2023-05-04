@@ -296,7 +296,7 @@ class DreamLearner(BaseLearner):
         Plotter.plot(obs, obs_mean)
 
         # Obs and reward reconstruction loss
-        obs_loss = F.mse_loss(obs, obs_mean).sum(-1).sum(-1).sum(-1).mean()
+        obs_loss = F.mse_loss(obs, obs_mean).mean()
         rew_loss = F.mse_loss(rew, rew_mean[1:])
         done_loss = F.binary_cross_entropy(done_prob[1:], done)
         # KL loss TODO check
