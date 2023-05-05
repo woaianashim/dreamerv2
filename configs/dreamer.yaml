@@ -1,6 +1,6 @@
 device: cuda:0
 total_steps: 1e7
-random_steps: 20000
+random_steps: 25000
 update_freq: 4
 checkpoint: None # replace with absolute path to checkpoint
 
@@ -26,7 +26,7 @@ Learner:
   critic_lr: 1e-4
   lr: 0.0001
   kl_alpha: 0.8
-  kl_beta: 0.1
+  kl_beta: 0 #0.1
   rho: 1
   gamma: 0.995
   gae_lambda: 0.95
@@ -43,26 +43,27 @@ Critic:
 
 Agent:
   _target_: algo.agent.AtariAgent
-  latent_size: 1624
+  latent_size: 2048
   hidden_size: 400
   depth: 4
 
 World:
   _target_: algo.world.WorldModel
   state_dim: 1024
-  hidden_dim: 600
+  hidden_dim: 1024
   feat_dim: 600
   embed_dim: 1536
   conv_hid: 48
   mlp_depth: 4
   n_classes: 32
   n_states: 32
+  checkpoint: "/storage/prj/abelozerov/dm2_1/best.pth"
 
 Dataset:
   _target_: algo.storage.DreamerDataset
   maxsize: 1000000
-  batch_size: 50
-  batch_len: 40
+  batch_size: 20
+  batch_len: 50
   minimal_size: 4
 
 Logger:

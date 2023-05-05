@@ -38,7 +38,6 @@ class RSSMModel(jit.ScriptModule):
                 hidden: Optional[torch.Tensor] = None, last_z_state: Optional[torch.Tensor] = None):
         T, B = embed.shape[:2]
         T = T-1
-        print(embed.shape)
 
         hidden = self.init_hidden[None].repeat(B, 1) if hidden is None else hidden
         last_z_state = self.init_state[None].repeat(B, 1) if last_z_state is None else last_z_state
@@ -51,7 +50,6 @@ class RSSMModel(jit.ScriptModule):
 
         zero_action = torch.zeros_like(action[:1])
         action = torch.cat([zero_action, action], dim=0)
-        print(action.shape)
 
         for t in range(T+1):
             prior_feat = self.transition(torch.cat([action[t], last_z_state], dim=-1))
@@ -100,6 +98,18 @@ class RSSMModel(jit.ScriptModule):
         new_z_state = self.straight_sample(prior_logit)
         return (new_z_state, new_hidden)
 
+    @torch.no_grad()
+    def encode_step(self, embed, hidden,):
+        post_logit = self.representation(torch.cat([hidden, embed], dim=-1))
+        z_state = self.straight_sample(post_logit)
+        full_state = torch.cat([z_state, hidden], dim=-1)
+        return full_state, z_state
+
+    @torch.no_grad()
+    def next_hidden(self, hidden, z_state, action):
+        prior_feat = self.transition(torch.cat([action, z_state], dim=-1))
+        new_hidden = self.gru_update(prior_feat, hidden)
+        return new_hidden
 
 
 class Encoder(nn.Module):
@@ -159,7 +169,7 @@ class MLP(nn.Module):
         return self.module(x)
 
 class WorldModel(nn.Module):
-    def __init__(self, state_dim, hidden_dim, feat_dim, conv_hid, embed_dim, n_classes, n_states, mlp_depth, action_space=None, n_channels=3):
+    def __init__(self, state_dim, hidden_dim, feat_dim, conv_hid, embed_dim, n_classes, n_states, mlp_depth, action_space=None, n_channels=3, checkpoint=None):
         super().__init__()
         self.n_classes = n_classes
         self.n_states = n_states
@@ -168,6 +178,9 @@ class WorldModel(nn.Module):
         self.rssm = RSSMModel(state_dim=state_dim, action_dim=action_space.n, embed_dim=embed_dim, hidden_dim=hidden_dim, n_classes=n_classes, n_states=n_states)
         self.reward = MLP(state_dim+hidden_dim, feat_dim, 1, mlp_depth, activation=nn.Tanh())
         self.done = MLP(state_dim+hidden_dim, feat_dim, 1, mlp_depth, activation=nn.Sigmoid())
+        if checkpoint is not None:
+            wts = torch.load(checkpoint, map_location="cpu")
+            self.load_state_dict(wts["model"], strict=False)
 
 
     def eval(self, obs, action, hidden=None):
